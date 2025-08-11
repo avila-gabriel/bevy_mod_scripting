@@ -5,9 +5,10 @@ edition = "2021"
 publish = false
 
 [features]
-default = ["lua", "rhai"]
+default = ["lua", "rhai", "js"]
 lua = ["bevy_mod_scripting_lua", "bevy_mod_scripting_functions/lua_bindings"]
 rhai = ["bevy_mod_scripting_rhai", "bevy_mod_scripting_functions/rhai_bindings"]
+js = ["bevy_mod_scripting_js", "bevy_mod_scripting_functions/js_bindings"]
 
 [dependencies]
 bevy = { workspace = true }
@@ -20,6 +21,7 @@ regex = { version = "1.11" }
 pretty_assertions = "1.*"
 bevy_mod_scripting_lua = { path = "../../languages/bevy_mod_scripting_lua", optional = true }
 bevy_mod_scripting_rhai = { path = "../../languages/bevy_mod_scripting_rhai", optional = true }
+bevy_mod_scripting_js = { path = "../../languages/bevy_mod_scripting_js", optional = true }
 criterion = "0.5"
 rand = "0.9"
 rand_chacha = "0.9"

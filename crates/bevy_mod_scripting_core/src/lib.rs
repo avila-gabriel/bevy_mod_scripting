@@ -427,7 +427,7 @@ mod test {
 
         app.world_mut()
             .resource_mut::<ScriptAssetSettings>()
-            .supported_extensions = &["lua", "rhai"];
+            .supported_extensions = &["lua", "rhai", "js"];
 
         BMSScriptingInfrastructurePlugin.finish(&mut app);
 
@@ -445,6 +445,11 @@ mod test {
             .get_asset_loader_with_extension("rhai")
             .await
             .expect("Rhai loader not found");
+
+        asset_loader
+            .get_asset_loader_with_extension("js")
+            .await
+            .expect("Javascript loader not found");
     }
 
     #[test]

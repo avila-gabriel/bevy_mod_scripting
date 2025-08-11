@@ -125,7 +125,8 @@ impl IntoDynamic for ScriptValue {
                     interop_error.into(),
                 )
                 .into())
-            }
+            },
+            ScriptValue::StaticReference(_) => todo!()
         })
     }
 }

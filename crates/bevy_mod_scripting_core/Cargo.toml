@@ -23,12 +23,14 @@ doc_always = []
 # if enabled enables some common mlua trait implementations 
 mlua_impls = ["mlua"]
 rhai_impls = ["rhai"]
+js_impls = ["boa_engine"]
 
 [dependencies]
 mlua = { version = "0.10", default-features = false, optional = true }
 rhai = { version = "1.21", default-features = false, features = [
     "sync",
 ], optional = true }
+boa_engine = { version = "0.20.0", optional = true }
 bevy = { workspace = true, default-features = false, features = ["bevy_asset"] }
 thiserror = "1.0.31"
 parking_lot = "0.12.1"

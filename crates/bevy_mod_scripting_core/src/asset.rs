@@ -29,6 +29,8 @@ pub enum Language {
     Lua,
     /// The Rune scripting language
     Rune,
+    /// The Javascript scripting language
+    Js,
     /// An external scripting language
     External(Cow<'static, str>),
     /// Set if none of the asset path to language mappers match
@@ -42,6 +44,7 @@ impl std::fmt::Display for Language {
             Language::Rhai => "Rhai".fmt(f),
             Language::Lua => "Lua".fmt(f),
             Language::Rune => "Rune".fmt(f),
+            Language::Js => "Javascript".fmt(f),
             Language::External(cow) => cow.fmt(f),
             Language::Unknown => "Unknown".fmt(f),
         }
@@ -149,8 +152,9 @@ impl Default for ScriptAssetSettings {
                 ("luau", Language::Lua),
                 ("rhai", Language::Rhai),
                 ("rn", Language::Rune),
+                ("js",   Language::Js),
             ]),
-            supported_extensions: &["lua", "luau", "rhai", "rn"],
+            supported_extensions: &["lua", "luau", "rhai", "rn", "js"],
         }
     }
 }
@@ -403,6 +407,7 @@ mod tests {
             extension_to_language_map: HashMap::from_iter(vec![
                 ("lua", Language::Lua),
                 ("rhai", Language::Rhai),
+                ("js", Language::Js),
             ]),
         }
     }
@@ -525,6 +530,10 @@ mod tests {
             settings.select_script_language(&AssetPath::from(Path::new("test.blob"))),
             Language::Unknown
         );
+        assert_eq!(
+            settings.select_script_language(&AssetPath::from(Path::new("test.js"))),
+            Language::Js
+    );
     }
 
     fn run_app_untill_asset_event(app: &mut App, event_kind: AssetEvent<ScriptAsset>) {

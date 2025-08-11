@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 use script_integration_test_harness::{
-    execute_lua_integration_test, execute_rhai_integration_test,
+    execute_lua_integration_test, execute_rhai_integration_test, execute_js_integration_test,
 };
 
 use test_utils::{discover_all_tests, Test, TestKind};
@@ -21,6 +21,7 @@ impl TestExecutor for Test {
         match self.kind {
             TestKind::Lua => execute_lua_integration_test(&self.path.to_string_lossy())?,
             TestKind::Rhai => execute_rhai_integration_test(&self.path.to_string_lossy())?,
+            TestKind::Js   => execute_js_integration_test(&self.path.to_string_lossy())?,
         }
 
         Ok(())

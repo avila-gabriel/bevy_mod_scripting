@@ -187,6 +187,27 @@ pub fn make_test_rhai_plugin() -> bevy_mod_scripting_rhai::RhaiScriptingPlugin {
     })
 }
 
+#[cfg(feature = "js")]
+pub fn make_test_js_plugin() -> bevy_mod_scripting_js::JsScriptingPlugin {
+    // TODO: Implement test setup for the JS scripting plugin.
+    //
+    // This should:
+    // - Create a default JsScriptingPlugin
+    // - Add a context initializer that registers a global `assert_throws` function
+    // - The function should:
+    //   * Call a JS function
+    //   * Catch any thrown error
+    //   * Match the error message against a provided regex
+    //   * Fail the test if no error was thrown or if the regex does not match
+    //
+    // Refer to how this is done in `make_test_lua_plugin` and `make_test_rhai_plugin`
+    //
+    // Requires access to the JS context and error handling from boa
+
+    todo!("JS test plugin initialization not yet implemented")
+}
+
+
 #[cfg(feature = "lua")]
 pub fn execute_lua_integration_test(script_id: &str) -> Result<(), String> {
     let plugin = make_test_lua_plugin();
@@ -196,6 +217,12 @@ pub fn execute_lua_integration_test(script_id: &str) -> Result<(), String> {
 #[cfg(feature = "rhai")]
 pub fn execute_rhai_integration_test(script_id: &str) -> Result<(), String> {
     let plugin = make_test_rhai_plugin();
+    execute_integration_test(plugin, |_, _| {}, script_id)
+}
+
+#[cfg(feature = "js")]
+pub fn execute_js_integration_test(script_id: &str) -> Result<(), String> {
+    let plugin = make_test_js_plugin();
     execute_integration_test(plugin, |_, _| {}, script_id)
 }
 
@@ -404,6 +431,23 @@ pub fn run_rhai_benchmark<M: criterion::measurement::Measurement>(
             Ok(())
         },
     )
+}
+
+#[cfg(feature = "js")]
+pub fn run_js_benchmark<M: criterion::measurement::Measurement>(
+    script_id: &str,
+    label: &str,
+    criterion: &mut criterion::BenchmarkGroup<M>,
+) -> Result<(), String> {
+    // TODO: Implement this using the JS plugin's context and runtime
+    // - Load the "bench" and optional "pre_bench" function from the JS global object
+    // - If "pre_bench" exists, call it once before benchmarking
+    // - Use criterion.bench_function to repeatedly call "bench" in the benchmark loop
+    // - Emit a tracing::event inside the loop for consistency
+    //
+    // Refer to how it's done in `run_lua_benchmark` and `run_rhai_benchmark`
+
+    unimplemented!("JS benchmark runner is not yet implemented");
 }
 
 pub fn run_plugin_benchmark<P, F, M: criterion::measurement::Measurement>(

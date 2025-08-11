@@ -14,6 +14,11 @@ pub mod rhai {
     pub use bevy_mod_scripting_rhai::*;
 }
 
+#[cfg(feature = "js")]
+pub mod js {
+    pub use bevy_mod_scripting_js::*;
+}
+
 // #[cfg(feature = "rune")]
 // pub mod rune {
 //     pub use bevy_mod_scripting_rune::*;
@@ -35,5 +40,7 @@ plugin_group! {
         bevy_mod_scripting_lua:::LuaScriptingPlugin,
         #[custom(cfg(feature = "rhai"))]
         bevy_mod_scripting_rhai:::RhaiScriptingPlugin,
+        #[custom(cfg(feature = "js"))]
+        bevy_mod_scripting_js:::JsScriptingPlugin,
     }
 }

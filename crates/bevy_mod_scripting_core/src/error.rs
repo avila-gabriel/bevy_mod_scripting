@@ -290,6 +290,35 @@ impl From<InteropError> for Box<rhai::EvalAltResult> {
     }
 }
 
+#[cfg(feature = "js_impls")]
+impl From<ScriptError> for boa_engine::error::JsError {
+    fn from(err: ScriptError) -> Self {
+        use boa_engine::error::JsNativeError;
+        JsNativeError::error()
+            .with_message(err.to_string())
+            .into()
+    }
+}
+
+#[cfg(feature = "js_impls")]
+impl From<InteropError> for boa_engine::error::JsError {
+    fn from(err: InteropError) -> Self {
+        use boa_engine::error::JsNativeError;
+        JsNativeError::typ()
+            .with_message(err.to_string())
+            .into()
+    }
+}
+
+#[cfg(feature = "js_impls")]
+impl From<boa_engine::error::JsError> for ScriptError {
+    fn from(js_err: boa_engine::error::JsError) -> Self {
+        ScriptError::new_external(
+            std::io::Error::new(std::io::ErrorKind::Other, js_err.to_string()),
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// An error thrown when a resource is missing
 pub struct MissingResourceError(&'static str);

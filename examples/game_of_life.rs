@@ -31,6 +31,7 @@ use bevy_mod_scripting_core::{
 };
 use bevy_mod_scripting_lua::LuaScriptingPlugin;
 use bevy_mod_scripting_rhai::RhaiScriptingPlugin;
+use bevy_mod_scripting_js::JsScriptingPlugin;
 use clap::Parser;
 
 // CONSOLE SETUP
@@ -130,8 +131,10 @@ fn game_of_life_app(app: &mut App) -> &mut App {
                 (
                     event_handler::<OnUpdate, LuaScriptingPlugin>,
                     event_handler::<OnUpdate, RhaiScriptingPlugin>,
+                    event_handler::<OnUpdate, JsScriptingPlugin>,
                     event_handler::<OnClick, LuaScriptingPlugin>,
                     event_handler::<OnClick, RhaiScriptingPlugin>,
+                    event_handler::<OnClick, JsScriptingPlugin>,
                 )
                     .after(send_on_update),
             ),
@@ -178,6 +181,7 @@ pub fn load_script_assets(
     loaded_scripts.0.extend(vec![
         asset_server.load("scripts/game_of_life.lua"),
         asset_server.load("scripts/game_of_life.rhai"),
+        asset_server.load("scripts/game_of_life.js"),
     ]);
 }
 

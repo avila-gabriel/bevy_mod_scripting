@@ -435,6 +435,12 @@ impl World {
                     &schedule,
                     builder.into_inner(),
                 )?,
+            #[cfg(feature = "js_bindings")]
+            asset::Language::Js => world
+                .add_system::<bevy_mod_scripting_js::JsScriptingPlugin>(
+                    &schedule,
+                    builder.into_inner(),
+                )?,
             _ => {
                 return Err(InteropError::unsupported_operation(
                     None,

@@ -166,6 +166,7 @@ impl IntoLua for LuaScriptValue {
                     .collect::<Result<_, mlua::Error>>()?;
                 hashmap.into_lua(lua)?
             }
+            ScriptValue::StaticReference(_) => todo!()
         })
     }
 }

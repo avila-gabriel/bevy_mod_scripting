@@ -1,0 +1,27 @@
+[package]
+name = "bevy_mod_scripting_js"
+version = "0.13.0"
+authors = ["Gabriel Avila <gabrielavila01@gmail.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "JavaScript support for bevy_mod_scripting"
+repository = "https://github.com/makspll/bevy_mod_scripting"
+homepage = "https://github.com/makspll/bevy_mod_scripting"
+keywords = ["bevy", "gamedev", "scripting", "javascript", "boa"]
+categories = ["game-development"]
+readme = "readme.md"
+
+[lib]
+name = "bevy_mod_scripting_js"
+path = "src/lib.rs"
+
+[dependencies]
+bevy = { workspace = true, default-features = false }
+bevy_mod_scripting_core = { workspace = true, features = ["js_impls"] }
+boa_engine = { version = "0.20.0", default-features = false }
+boa_gc = { version = "0.20.0", default-features = false }
+parking_lot = "0.12.1"
+profiling = { workspace = true }
+
+[lints]
+workspace = true
