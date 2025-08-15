@@ -1,6 +1,6 @@
 //! This module contains the `ScriptValue` enum which is used to pass values between scripting languages and Rust.
 
-use std::{borrow::Cow, collections::HashMap, any::TypeId};
+use std::{borrow::Cow, collections::HashMap};
 
 use bevy::reflect::{OffsetAccess, ParsedPath, Reflect};
 
@@ -33,8 +33,6 @@ pub enum ScriptValue {
     Map(HashMap<String, ScriptValue>),
     /// Represents a reference to a value.
     Reference(ReflectReference),
-    /// Represents a static reference to a value
-    StaticReference(TypeId),
     /// A dynamic script function possibly storing state. Preffer using the [`ScriptValue::Function`] variant instead if possible.
     FunctionMut(DynamicScriptFunctionMut),
     /// A stateless dynamic script function
@@ -63,7 +61,6 @@ impl ScriptValue {
             ScriptValue::String(_) => "String".to_owned(),
             ScriptValue::List(_) => "List".to_owned(),
             ScriptValue::Reference(_) => "Reference".to_owned(),
-            ScriptValue::StaticReference(_) => "StaticReference".to_owned(),
             ScriptValue::FunctionMut(_) => "FunctionMut".to_owned(),
             ScriptValue::Function(_) => "Function".to_owned(),
             ScriptValue::Error(_) => "Error".to_owned(),
@@ -132,13 +129,6 @@ impl From<Vec<ScriptValue>> for ScriptValue {
 impl From<ReflectReference> for ScriptValue {
     fn from(value: ReflectReference) -> Self {
         ScriptValue::Reference(value)
-    }
-}
-
-#[profiling::all_functions]
-impl From<TypeId> for ScriptValue {
-    fn from(id: TypeId) -> Self { 
-        ScriptValue::StaticReference(id)
     }
 }
 

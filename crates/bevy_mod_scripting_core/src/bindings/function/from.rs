@@ -41,18 +41,6 @@ impl FromScript for ScriptValue {
 }
 
 #[profiling::all_functions]
-impl FromScript for TypeId {
-    type This<'w> = TypeId;
-
-    fn from_script(value: ScriptValue, _world: WorldGuard<'_>) -> Result<Self::This<'_>, InteropError> {
-        match value {
-            ScriptValue::StaticReference(id) => Ok(id),
-            other => Err(InteropError::value_mismatch(TypeId::of::<TypeId>(), other)),
-        }
-    }
-}
-
-#[profiling::all_functions]
 impl FromScript for () {
     type This<'w> = Self;
     fn from_script(_value: ScriptValue, _world: WorldGuard) -> Result<Self, InteropError> {

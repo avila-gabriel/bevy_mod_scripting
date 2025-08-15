@@ -5,29 +5,25 @@ use bevy_mod_scripting_core::{
     error::InteropError,
 };
 use boa_engine::{
+    error::JsNativeError,
     js_string,
     native_function::NativeFunction,
-    object::{JsObject, FunctionObjectBuilder, builtins::{JsArray, JsFunction}},
-    property::PropertyKey,
-    value::{Convert, TryFromJs},
-    Context, JsString, JsValue,
-    error::JsNativeError,
+    object::{builtins::JsArray, FunctionObjectBuilder, JsObject},
+    property::{Attribute, PropertyKey},
+    Context, JsString, JsValue, Source,
 };
 use std::{
     cell::Cell,
-    ops::{Deref, DerefMut},
     collections::VecDeque,
+    ops::{Deref, DerefMut},
 };
 
-/// Make the current Boa [`Context`] available to nested conversions and callbacks
-/// during `f(ctx)` by stashing `ctx` in thread-local storage.
-///
-/// This mirrors the world container pattern: it assumes single-threaded use of a
-/// given VM. The TLS pointer is set for the duration of the call and then restored.
-///
-/// # Safety
-/// The pointer stored in TLS is only valid for the lifetime of this call; callers
-/// must ensure the VM is not accessed from other threads while this is active.
+// Some host -> JS call paths (e.g., invoking a JS function that a script passed into a
+// host API) happen outside the immediate event-handler frame where we hold `&mut Context`.
+// We follow the same pattern as the World TLS: a guarded, single-thread assumption.
+thread_local! { static TLS_JS_CTX: Cell<*mut Context> = const { Cell::new(std::ptr::null_mut()) }; }
+
+/// Run `f` with `ctx` installed in TLS so nested conversions/callbacks can retrieve it.
 pub fn with_js_context<R>(ctx: &mut Context, f: impl FnOnce(&mut Context) -> R) -> R {
     TLS_JS_CTX.with(|cell| {
         let prev = cell.replace(ctx as *mut _);
@@ -37,45 +33,28 @@ pub fn with_js_context<R>(ctx: &mut Context, f: impl FnOnce(&mut Context) -> R) 
     })
 }
 
-/// Get a mutable reference to the current thread’s active Boa [`Context`]
-/// previously installed by [`with_js_context`].
-///
-/// Returns an [`InteropError`] if no context is currently installed.
-/// The returned reference is `'static` only by construction; it is valid
-/// **only** while the outer `with_js_context` call is on the stack.
+/// Retrieve the current JS Context previously installed by `with_js_context`.
+/// The returned reference is only valid while that call is on the stack.
 pub fn try_current_ctx() -> Result<&'static mut Context, InteropError> {
     TLS_JS_CTX.with(|cell| {
         let ptr = cell.get();
         if ptr.is_null() {
             Err(InteropError::invariant(
-                "no active JS Context in thread-local storage; \
-                 wrap the call site with `with_js_context(ctx, || ...)`",
+                "no active JS Context; wrap call site with `with_js_context(ctx, ...)`",
             ))
         } else {
-            // SAFETY: confined to single-threaded use, set by with_js_context.
+            // SAFETY: single-threaded access guaranteed by our usage pattern.
             Ok(unsafe { &mut *ptr })
         }
     })
 }
 
-// ---------- TLS: make the current Boa Context available to nested callbacks ----------
-// Safety note: exactly like your World container pattern, this assumes single-threaded
-// use of a given VM. We only borrow for the duration of a guarded call.
-thread_local! {
-    static TLS_JS_CTX: Cell<*mut Context> = const { Cell::new(std::ptr::null_mut()) };
-}
-
-fn ext<E: std::fmt::Display>(e: E) -> InteropError {
-    InteropError::invariant(e.to_string())
-    // or InteropError::external(e.to_string()) if you have that
-}
-
-// ---------- Registry in globalThis to keep JS callables GC-reachable ----------
+#[inline]
+fn ext<E: std::fmt::Display>(e: E) -> InteropError { InteropError::invariant(e.to_string()) }
 
 fn ensure_registry(ctx: &mut Context) -> Result<JsObject, InteropError> {
     let global = ctx.global_object().clone();
     let key = js_string!("__bms_fn_reg");
-
     let maybe = global.get(key.clone(), ctx).map_err(ext)?;
     if maybe.is_undefined() {
         let reg = JsObject::with_null_proto();
@@ -89,21 +68,12 @@ fn ensure_registry(ctx: &mut Context) -> Result<JsObject, InteropError> {
     }
 }
 
-thread_local! {
-    static NEXT_FN_ID: Cell<u64> = const { Cell::new(0) };
-}
+thread_local! { static NEXT_FN_ID: Cell<u64> = const { Cell::new(0) }; }
+fn next_fn_id() -> u64 { NEXT_FN_ID.with(|c| { let id = c.get(); c.set(id.wrapping_add(1)); id }) }
 
-fn next_fn_id() -> u64 {
-    NEXT_FN_ID.with(|c| {
-        let id = c.get();
-        c.set(id.wrapping_add(1));
-        id
-    })
-}
-
-fn store_callable(ctx: &mut Context, f: JsFunction) -> u64 {
+fn store_callable(ctx: &mut Context, f: boa_engine::object::builtins::JsFunction) -> u64 {
     let id = next_fn_id();
-    let reg = ensure_registry(ctx).expect("registry must be creatable");
+    let reg = ensure_registry(ctx).expect("registry creatable");
     let key = PropertyKey::from(JsString::from(format!("fn:{id}")));
     let _ = reg.set(key, JsValue::from(f), false, ctx);
     id
@@ -119,14 +89,11 @@ fn call_stored(ctx: &mut Context, id: u64, args: &[JsValue]) -> Result<JsValue, 
     f.call(&JsValue::undefined(), args, ctx).map_err(ext)
 }
 
-// ---------- Public wrapper ----------
-
-/// A wrapper around a [`ScriptValue`] that implements conversions to/from Boa:
-/// see [`FromJs`] and [`IntoJs`].
+/// Wrapper around a [`ScriptValue`] that participates in conversions to and from
+/// Boa's JavaScript values. Use this when shuttling values across the VM boundary.
 #[derive(Debug, Clone)]
 pub struct JsScriptValue(pub ScriptValue);
 
-// Deref helpers
 impl Deref for JsScriptValue {
     type Target = ScriptValue;
     fn deref(&self) -> &Self::Target { &self.0 }
@@ -134,49 +101,50 @@ impl Deref for JsScriptValue {
 impl DerefMut for JsScriptValue {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
-
-// Round-trip ScriptValue <-> wrapper
 impl From<ScriptValue> for JsScriptValue { fn from(v: ScriptValue) -> Self { Self(v) } }
 impl From<JsScriptValue> for ScriptValue { fn from(v: JsScriptValue) -> Self { v.0 } }
 
-/// Convert a Boa [`JsValue`] into a Rust type, using the given Boa [`Context`].
+/// Convert a Boa [`JsValue`] into a Rust type.
+///
+/// Implementors may need the active Boa [`Context`] to allocate or inspect
+/// JS objects (e.g., to iterate arrays or read object properties). The context
+/// is only valid for the duration of the call and must not be stored.
 pub trait FromJs: Sized {
-    /// Attempt to convert `value` into `Self`, possibly allocating JS objects
-    /// or consulting the VM state via `ctx`.
+    /// Convert `value` from JavaScript into `Self`, using `ctx` for any VM interaction.
+    ///
+    /// Returns an [`InteropError`] when the value cannot be represented as `Self`
+    /// (e.g., unsupported type, conversion failure).
     fn from_js(value: &JsValue, ctx: &mut Context) -> Result<Self, InteropError>;
 }
 
-/// Convert a Rust type into a Boa [`JsValue`], using the given Boa [`Context`].
+/// Convert a Rust value into a Boa [`JsValue`].
+///
+/// Implementors may allocate objects/arrays/functions inside the provided
+/// Boa [`Context`]. The produced value belongs to `ctx`'s realm.
 pub trait IntoJs {
-    /// Produce a JS value representing `self`, possibly allocating into the
-    /// target realm and consulting the VM via `ctx`.
+    /// Produce a JavaScript value for `self` in the given [`Context`].
+    ///
+    /// Returns an [`InteropError`] when conversion fails (e.g., attempting to
+    /// encode an unsupported Rust type).
     fn into_js(self, ctx: &mut Context) -> Result<JsValue, InteropError>;
 }
 
-/// The caller context used when invoking host functions from JavaScript
+/// Caller context for host function calls originating from JS.
 pub const JS_CALLER_CONTEXT: FunctionCallContext = FunctionCallContext::new(Language::Js);
 
 impl FromJs for JsScriptValue {
     fn from_js(value: &JsValue, ctx: &mut Context) -> Result<Self, InteropError> {
-        // null/undefined
+        // undefined / null => Unit
         if value.is_null_or_undefined() {
             return Ok(Self(ScriptValue::Unit));
         }
 
-        // string (must come before bool/number conversions to avoid truthiness)
-        if let Some(s) = value.as_string() {
-            return Ok(Self(ScriptValue::String(s.to_std_string_escaped().into())));
-        }
-
-        // function — store in registry and return a callable ScriptValue
+        // Callable -> wrap in ScriptValue::Function (kept GC-reachable in the JS registry)
         if let Some(func) = value.as_function() {
             let id = store_callable(ctx, func.clone());
             let fun = move |_fcx: FunctionCallContext, args: VecDeque<ScriptValue>| {
-                let ctx = match try_current_ctx() {
-                    Ok(c) => c,
-                    Err(e) => return ScriptValue::Error(e),
-                };
-
+                let ctx = match try_current_ctx() { Ok(c) => c, Err(e) => return ScriptValue::Error(e) };
+                // to JS
                 let mut js_args = Vec::with_capacity(args.len());
                 for a in args {
                     match JsScriptValue(a).into_js(ctx) {
@@ -184,7 +152,7 @@ impl FromJs for JsScriptValue {
                         Err(e) => return ScriptValue::Error(e),
                     }
                 }
-
+                // call
                 match call_stored(ctx, id, &js_args) {
                     Ok(v) => match JsScriptValue::from_js(&v, ctx) {
                         Ok(w) => w.0,
@@ -196,20 +164,29 @@ impl FromJs for JsScriptValue {
             return Ok(Self(ScriptValue::Function(fun.into())));
         }
 
-        // object / array / reference / static-type
-        if let Some(obj) = value.as_object() {
-            // 0) Static type handle? (TypeId wrapper)
-            if let Some(sr) = obj.downcast_ref::<JsStaticReflectReference>() {
-                // TypeId is Copy; this just copies the id
-                return Ok(Self(ScriptValue::StaticReference(sr.0)));
-            }
+        // Strings
+        if let Some(s) = value.as_string() {
+            return Ok(Self(ScriptValue::String(s.to_std_string_escaped().into())));
+        }
 
-            // 1) Instance ReflectReference?
+        // Objects (includes arrays and our host wrappers)
+        if let Some(obj) = value.as_object() {
+            // 1) Dynamic reflect handle -> pass through as a real reference
             if let Some(rr) = obj.downcast_ref::<JsReflectReference>() {
                 return Ok(Self(ScriptValue::Reference(rr.0.clone())));
             }
 
-            // 2) Array -> List
+            // 2) Static type token: NOT representable as a ScriptValue without changing the enum.
+            //    It’s meant to be used via its own `.call(...)` / `.fn(...)` entrypoints.
+            if obj.downcast_ref::<JsStaticReflectReference>().is_some() {
+                return Err(InteropError::unsupported_operation(
+                    None,
+                    None,
+                    "StaticReflectReference cannot be passed as a value; use its .call(...)/.fn(...) APIs or get a dynamic type handle via world.get_type_by_name(...)".to_owned(),
+                ));
+            }
+
+            // 3) Array => List
             if let Ok(arr) = JsArray::from_object(obj.clone()) {
                 let len = arr.length(ctx).map_err(ext)? as usize;
                 let arr_obj = arr.deref().clone();
@@ -221,17 +198,20 @@ impl FromJs for JsScriptValue {
                 return Ok(Self(ScriptValue::List(out)));
             }
 
-            // 3) Plain object -> Map
-            let mut map = std::collections::HashMap::new();
-
-            let object_ctor = ctx.global_object()
-                .get(js_string!("Object"), ctx).map_err(ext)?
-                .as_object().ok_or_else(|| InteropError::invariant("global Object is not an object"))?
+            // 4) Plain object => Map<String, ScriptValue> (Object.keys + toString on each key)
+            let object_ctor = ctx
+                .global_object()
+                .get(js_string!("Object"), ctx)
+                .map_err(ext)?
+                .as_object()
+                .ok_or_else(|| InteropError::invariant("global Object is not an object"))?
                 .clone();
 
             let keys_fn = object_ctor
-                .get(js_string!("keys"), ctx).map_err(ext)?
-                .as_object().ok_or_else(|| InteropError::invariant("Object.keys is not a function"))?
+                .get(js_string!("keys"), ctx)
+                .map_err(ext)?
+                .as_object()
+                .ok_or_else(|| InteropError::invariant("Object.keys is not a function"))?
                 .clone();
 
             let keys_val = keys_fn
@@ -239,47 +219,49 @@ impl FromJs for JsScriptValue {
                 .map_err(ext)?;
 
             let keys_arr = JsArray::from_object(
-                keys_val.as_object().ok_or_else(|| InteropError::invariant("Object.keys did not return an object"))?.clone()
-            ).map_err(|_| InteropError::invariant("Object.keys did not return an array"))?;
+                keys_val
+                    .as_object()
+                    .ok_or_else(|| InteropError::invariant("Object.keys did not return an object"))?
+                    .clone(),
+            )
+            .map_err(|_| InteropError::invariant("Object.keys did not return an array"))?;
 
             let len = keys_arr.length(ctx).map_err(ext)? as usize;
             let keys_obj = keys_arr.deref().clone();
-
+            let mut map = std::collections::HashMap::with_capacity(len);
             for i in 0..len {
                 let key_val = keys_obj.get(i as i32, ctx).map_err(ext)?;
                 let key_js = key_val.to_string(ctx).map_err(ext)?;
                 let key = key_js.to_std_string_escaped();
-
                 let val = obj.get(key_js, ctx).map_err(ext)?;
                 map.insert(key, JsScriptValue::from_js(&val, ctx)?.0);
             }
-
             return Ok(Self(ScriptValue::Map(map)));
         }
 
-        // number (guard so booleans don't get coerced to 0/1)
+        // Numbers
         if value.is_number() {
-            if let Ok(Convert(i)) = Convert::<i32>::try_from_js(value, ctx) {
-                return Ok(Self(ScriptValue::Integer(i as i64)));
-            }
-            if let Ok(Convert(f)) = Convert::<f64>::try_from_js(value, ctx) {
-                return Ok(Self(ScriptValue::Float(f)));
+            let n = value.to_number(ctx).map_err(ext)?;
+            if n.is_finite() {
+                if n.fract() == 0.0 && n.abs() <= (1i64 << 53) as f64 {
+                    return Ok(Self(ScriptValue::Integer(n as i64)));
+                }
+                return Ok(Self(ScriptValue::Float(n)));
             }
         }
 
-        // boolean LAST (and only if it's actually a boolean)
+        // Booleans
         if value.is_boolean() {
-            if let Ok(Convert(b)) = Convert::<bool>::try_from_js(value, ctx) {
-                return Ok(Self(ScriptValue::Bool(b)));
-            }
+            return Ok(Self(ScriptValue::Bool(value.to_boolean())));
         }
 
-        Err(InteropError::invariant(
-            "Unsupported JsValue -> ScriptValue with current docs",
+        Err(InteropError::unsupported_operation(
+            None,
+            None,
+            "Unsupported JsValue -> ScriptValue".to_owned(),
         ))
     }
 }
-
 
 impl IntoJs for JsScriptValue {
     fn into_js(self, ctx: &mut Context) -> Result<JsValue, InteropError> {
@@ -291,50 +273,16 @@ impl IntoJs for JsScriptValue {
             ScriptValue::String(s) => Ok(JsValue::from(JsString::from(s.as_ref()))),
 
             ScriptValue::Reference(r) => {
-                // Create a `ReflectReference` JS object with embedded Rust data.
-                let ctor = ctx
+                // Wrap as a host object with the canonical ReflectReference prototype we installed.
+                let proto = ctx
                     .global_object()
-                    .get(js_string!("ReflectReference"), ctx)
-                    .map_err(|e| InteropError::invariant(e.to_string()))?
-                    .as_object()
-                    .ok_or_else(|| InteropError::invariant("ReflectReference ctor missing"))?
-                    .clone();
-
-                let proto = ctor
-                    .get(js_string!("prototype"), ctx)
-                    .map_err(|e| InteropError::invariant(e.to_string()))?
-                    .as_object()
-                    .cloned();
-
-                let obj = boa_engine::object::JsObject::from_proto_and_data(
-                    proto,
-                    JsReflectReference::from(r),
-                );
+                    .get(js_string!("__bms_rr_proto"), ctx)
+                    .ok()
+                    .and_then(|v| v.as_object().cloned());
+                let obj = JsObject::from_proto_and_data(proto, JsReflectReference::from(r));
                 Ok(JsValue::from(obj))
-            },
+            }
 
-            ScriptValue::StaticReference(tid) => {
-                let ctor = ctx
-                    .global_object()
-                    .get(js_string!("StaticReflectReference"), ctx)
-                    .map_err(|e| InteropError::invariant(e.to_string()))?
-                    .as_object()
-                    .ok_or_else(|| InteropError::invariant("StaticReflectReference ctor missing"))?
-                    .clone();
-
-                let proto = ctor.get(js_string!("prototype"), ctx)
-                    .map_err(|e| InteropError::invariant(e.to_string()))?
-                    .as_object()
-                    .cloned();
-
-                let obj = boa_engine::object::JsObject::from_proto_and_data(
-                    proto,
-                    JsStaticReflectReference(tid),
-                );
-                Ok(JsValue::from(obj))
-            },
-
-            // Stateless function
             ScriptValue::Function(function) => {
                 let nf = unsafe {
                     NativeFunction::from_closure(move |_this, js_args, js_ctx| {
@@ -345,24 +293,23 @@ impl IntoJs for JsScriptValue {
                                 .0;
                             sv_args.push_back(sv);
                         }
-
                         let out = function
                             .call(sv_args, JS_CALLER_CONTEXT)
                             .map_err(|e| JsNativeError::error().with_message(e.to_string()))?;
-
                         let js = JsScriptValue(out)
                             .into_js(js_ctx)
                             .map_err(|e| JsNativeError::error().with_message(e.to_string()))?;
-                        Ok(js) // <-- return it
+                        Ok(js)
                     })
                 };
-
                 let fobj = FunctionObjectBuilder::new(ctx.realm(), nf)
-                    .name("hostFn").length(0).constructor(false).build();
+                    .name("hostFn")
+                    .length(0)
+                    .constructor(false)
+                    .build();
                 Ok(JsValue::from(fobj))
-            },
+            }
 
-            // Stateful/mutable function
             ScriptValue::FunctionMut(function_mut) => {
                 let nf = unsafe {
                     NativeFunction::from_closure(move |_this, js_args, js_ctx| {
@@ -373,22 +320,22 @@ impl IntoJs for JsScriptValue {
                                 .0;
                             sv_args.push_back(sv);
                         }
-
                         let out = function_mut
                             .call(sv_args, JS_CALLER_CONTEXT)
                             .map_err(|e| JsNativeError::error().with_message(e.to_string()))?;
-
                         let js = JsScriptValue(out)
                             .into_js(js_ctx)
                             .map_err(|e| JsNativeError::error().with_message(e.to_string()))?;
-                        Ok(js) // <-- and return here too
+                        Ok(js)
                     })
                 };
-
                 let fobj = FunctionObjectBuilder::new(ctx.realm(), nf)
-                    .name("hostFn").length(0).constructor(false).build();
+                    .name("hostFn")
+                    .length(0)
+                    .constructor(false)
+                    .build();
                 Ok(JsValue::from(fobj))
-            },
+            }
 
             ScriptValue::List(items) => {
                 let mut js_items = Vec::with_capacity(items.len());
@@ -397,25 +344,29 @@ impl IntoJs for JsScriptValue {
                 }
                 let arr = JsArray::from_iter(js_items.into_iter(), ctx);
                 Ok(JsValue::from(arr))
-            },
+            }
 
             ScriptValue::Map(map) => {
-                let mut entries = Vec::with_capacity(map.len());
+                // ⚠️ Avoid double-borrowing `ctx`: collect first, then build.
+                let mut props: Vec<(JsString, JsValue)> = Vec::with_capacity(map.len());
                 for (k, v) in map {
                     let key = JsString::from(k);
                     let val = JsScriptValue(v).into_js(ctx)?;
-                    entries.push((key, val));
+                    props.push((key, val));
                 }
-
                 let mut init = boa_engine::object::ObjectInitializer::new(ctx);
-                for (k, v) in entries {
-                    init.property(k, v, boa_engine::property::Attribute::all());
+                for (key, val) in props {
+                    init.property(key, val, Attribute::all());
                 }
                 Ok(JsValue::from(init.build()))
             }
 
-            // Just propagate the error (don’t wrap it as “external”).
             ScriptValue::Error(e) => Err(e),
         }
     }
+}
+
+#[allow(dead_code)]
+fn eval_in_context(ctx: &mut Context, src: &str) -> Result<JsValue, InteropError> {
+    ctx.eval(Source::from_bytes(src)).map_err(ext)
 }

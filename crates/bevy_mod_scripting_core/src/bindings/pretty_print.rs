@@ -506,7 +506,6 @@ impl DisplayWithWorld for ScriptValue {
     fn display_value_with_world(&self, world: WorldGuard) -> String {
         match self {
             ScriptValue::Reference(r) => r.display_value_with_world(world),
-            ScriptValue::StaticReference(id) => id.display_with_world(world),
             ScriptValue::FunctionMut(f) => format!("FunctionMut({})", f.name()),
             ScriptValue::Function(f) => format!("Function({})", f.name()),
             ScriptValue::Unit => "()".to_owned(),
@@ -538,7 +537,6 @@ impl DisplayWithWorld for ScriptValue {
                 string
             }
             ScriptValue::Reference(reflect_reference) => reflect_reference.display_without_world(),
-            ScriptValue::StaticReference(id) => format!("StaticReference({id:?})"),
             ScriptValue::FunctionMut(dynamic_script_function_mut) => {
                 format!("Function({})", dynamic_script_function_mut.name())
             }
